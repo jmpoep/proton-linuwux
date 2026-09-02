@@ -413,16 +413,35 @@ static int linuwux_handle_sigsys(void *sigcontext)
 {
     ucontext_t *ctx = sigcontext;
     __uint128_t *xmm_regs = (__uint128_t *)ctx->uc_mcontext.fpregs->_xmm;
-
-    if (linuwux_router.generic_target != 0 &&
-        (xmm_regs[5] & 0xFFFFFFFFFFFFFFFF) != SyscallBypassMagic)
-        return linuwux_redirect_syscall(ctx, linuwux_router.generic_target);
+    uint32_t syscall_id = (uint32_t)ctx->uc_mcontext.gregs[REG_RAX];
 
     if ((xmm_regs[5] & 0xFFFFFFFFFFFFFFFF) == SyscallBypassMagic)
     {
         xmm_regs[5] = 0;
         /* MESSAGE("SyscallBypassMagic!\n"); */
+        return 0;
     }
+
+    if (ctx->uc_mcontext.gregs[REG_RAX] == 0xffff)
+        return 0;
+
+    if (linuwux_router.qsi.target_valid &&
+        linuwux_router.qsi.syscall_id_valid &&
+        linuwux_router.qsi.target != 0 &&
+        syscall_id == linuwux_router.qsi.syscall_id &&
+        ctx->uc_mcontext.gregs[REG_RCX] <= 0x7fffffffffffULL &&
+        ctx->uc_mcontext.gregs[REG_R10] == 0)
+        return linuwux_redirect_syscall(ctx, linuwux_router.qsi.target);
+
+    if (linuwux_router.qfa.target_valid &&
+        linuwux_router.qfa.syscall_id_valid &&
+        linuwux_router.qfa.target != 0 &&
+        syscall_id == linuwux_router.qfa.syscall_id &&
+        ctx->uc_mcontext.gregs[REG_RCX] <= 0x7fffffffffffULL)
+        return linuwux_redirect_syscall(ctx, linuwux_router.qfa.target);
+
+    if (linuwux_router.generic_target != 0)
+        return linuwux_redirect_syscall(ctx, linuwux_router.generic_target);
 
     return 0;
 }
