@@ -230,6 +230,14 @@ static void detect_cpu_vendor(void)
     /* Sorry Zhaoxin/Hygon CPU owners :( */
 }
 
+static void linuwux_zero_cpuid_result(ucontext_t *ucontext)
+{
+    ucontext->uc_mcontext.gregs[REG_RAX] = 0;
+    ucontext->uc_mcontext.gregs[REG_RBX] = 0;
+    ucontext->uc_mcontext.gregs[REG_RCX] = 0;
+    ucontext->uc_mcontext.gregs[REG_RDX] = 0;
+}
+
 static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
 {
     unsigned int leaf;
@@ -282,10 +290,7 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
                 break;
 
             case 0x80000004:
-                ucontext->uc_mcontext.gregs[REG_RAX] = 0x0;
-                ucontext->uc_mcontext.gregs[REG_RBX] = 0x0;
-                ucontext->uc_mcontext.gregs[REG_RCX] = 0x0;
-                ucontext->uc_mcontext.gregs[REG_RDX] = 0x0;
+                linuwux_zero_cpuid_result(ucontext);
                 break;
 
             case 0x336933:
@@ -305,19 +310,55 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
                     patch_kuser_shared_data();
                 }
 
-                ucontext->uc_mcontext.gregs[REG_RAX] = 0x0;
-                ucontext->uc_mcontext.gregs[REG_RBX] = 0x0;
-                ucontext->uc_mcontext.gregs[REG_RCX] = 0x0;
-                ucontext->uc_mcontext.gregs[REG_RDX] = 0x0;
+                linuwux_zero_cpuid_result(ucontext);
                 break;
 
             case 0x69696969:
                 MESSAGE("Observing legacy LinUwUx protocol\n");
                 linuwux_protocol_flags |= LINUWUX_PROTOCOL_LEGACY;
-                ucontext->uc_mcontext.gregs[REG_RAX] = 0x0;
-                ucontext->uc_mcontext.gregs[REG_RBX] = 0x0;
-                ucontext->uc_mcontext.gregs[REG_RCX] = 0x0;
-                ucontext->uc_mcontext.gregs[REG_RDX] = 0x0;
+                linuwux_zero_cpuid_result(ucontext);
+                break;
+
+            case 0x336943:
+                if (!(linuwux_protocol_flags & LINUWUX_PROTOCOL_LEGACY))
+                {
+                    linuwux_zero_cpuid_result(ucontext);
+                    break;
+                }
+
+                MESSAGE("Registering legacy QSI syscall ID\n");
+                linuwux_router.qsi.syscall_id =
+                    (uint32_t)ucontext->uc_mcontext.gregs[REG_RCX];
+                linuwux_router.qsi.syscall_id_valid = 1;
+                linuwux_zero_cpuid_result(ucontext);
+                break;
+
+            case 0x336934:
+                if (!(linuwux_protocol_flags & LINUWUX_PROTOCOL_LEGACY))
+                {
+                    linuwux_zero_cpuid_result(ucontext);
+                    break;
+                }
+
+                MESSAGE("Registering legacy QFA syscall target\n");
+                linuwux_router.qfa.target =
+                    ucontext->uc_mcontext.gregs[REG_RCX];
+                linuwux_router.qfa.target_valid = 1;
+                linuwux_zero_cpuid_result(ucontext);
+                break;
+
+            case 0x336944:
+                if (!(linuwux_protocol_flags & LINUWUX_PROTOCOL_LEGACY))
+                {
+                    linuwux_zero_cpuid_result(ucontext);
+                    break;
+                }
+
+                MESSAGE("Registering legacy QFA syscall ID\n");
+                linuwux_router.qfa.syscall_id =
+                    (uint32_t)ucontext->uc_mcontext.gregs[REG_RCX];
+                linuwux_router.qfa.syscall_id_valid = 1;
+                linuwux_zero_cpuid_result(ucontext);
                 break;
 
             case 0x336967:
@@ -329,10 +370,7 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
                     wine_server_call( req );
                 }
                 SERVER_END_REQ;
-                ucontext->uc_mcontext.gregs[REG_RAX] = 0x0;
-                ucontext->uc_mcontext.gregs[REG_RBX] = 0x0;
-                ucontext->uc_mcontext.gregs[REG_RCX] = 0x0;
-                ucontext->uc_mcontext.gregs[REG_RDX] = 0x0;
+                linuwux_zero_cpuid_result(ucontext);
                 break;
 
             default:
