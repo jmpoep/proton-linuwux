@@ -16,13 +16,12 @@
 #define ARCH_SET_CPUID 0x1012
 #endif
 
-enum linuwux_protocol
+enum linuwux_protocol_flag
 {
-    LINUWUX_PROTOCOL_NONE = 0,
-    LINUWUX_PROTOCOL_CURRENT,
+    LINUWUX_PROTOCOL_CURRENT = 1u << 0,
 };
 
-static enum linuwux_protocol linuwux_protocol = LINUWUX_PROTOCOL_NONE;
+static unsigned int linuwux_protocol_flags;
 
 struct linuwux_syscall_router
 {
@@ -280,7 +279,7 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
 
             case 0x336933:
                 MESSAGE("Spoofing CPUID leaf %x\n", leaf);
-                linuwux_protocol = LINUWUX_PROTOCOL_CURRENT;
+                linuwux_protocol_flags |= LINUWUX_PROTOCOL_CURRENT;
                 linuwux_router.generic_target = ucontext->uc_mcontext.gregs[REG_RCX];
                 patch_kuser_shared_data();
                 ucontext->uc_mcontext.gregs[REG_RAX] = 0x0;
