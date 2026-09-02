@@ -24,8 +24,13 @@ enum linuwux_protocol
 
 static enum linuwux_protocol linuwux_protocol = LINUWUX_PROTOCOL_NONE;
 
-/* This will point to the game's memory region where syscall spoofing is happening. */
-uint64_t TargetSysHandler = 0;
+struct linuwux_syscall_router
+{
+    uint64_t generic_target;
+};
+
+static struct linuwux_syscall_router linuwux_router;
+
 uint64_t SyscallBypassMagic = 0x1337133713371337;
 
 /* Spoofed CPUID values - set based on CPU vendor. */
@@ -234,7 +239,7 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
                 ucontext->uc_mcontext.gregs[REG_RAX] = spoof_leaf1_eax;
                 ucontext->uc_mcontext.gregs[REG_RBX] = spoof_leaf1_ebx;
                 ucontext->uc_mcontext.gregs[REG_RCX] =
-                spoof_leaf1_ecx | (TargetSysHandler ? 0 : (1u << 31));
+                spoof_leaf1_ecx | (linuwux_router.generic_target ? 0 : (1u << 31));
                 ucontext->uc_mcontext.gregs[REG_RDX] = spoof_leaf1_edx;
                 break;
 
@@ -276,7 +281,7 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
             case 0x336933:
                 MESSAGE("Spoofing CPUID leaf %x\n", leaf);
                 linuwux_protocol = LINUWUX_PROTOCOL_CURRENT;
-                TargetSysHandler = ucontext->uc_mcontext.gregs[REG_RCX];
+                linuwux_router.generic_target = ucontext->uc_mcontext.gregs[REG_RCX];
                 patch_kuser_shared_data();
                 ucontext->uc_mcontext.gregs[REG_RAX] = 0x0;
                 ucontext->uc_mcontext.gregs[REG_RBX] = 0x0;
@@ -340,9 +345,9 @@ static int linuwux_handle_sigsys(void *sigcontext)
     ucontext_t *ctx = sigcontext;
     __uint128_t *xmm_regs = (__uint128_t *)ctx->uc_mcontext.fpregs->_xmm;
 
-    if (TargetSysHandler != 0 &&
+    if (linuwux_router.generic_target != 0 &&
         (xmm_regs[5] & 0xFFFFFFFFFFFFFFFF) != SyscallBypassMagic)
-        return linuwux_redirect_syscall(ctx, TargetSysHandler);
+        return linuwux_redirect_syscall(ctx, linuwux_router.generic_target);
 
     if ((xmm_regs[5] & 0xFFFFFFFFFFFFFFFF) == SyscallBypassMagic)
     {
