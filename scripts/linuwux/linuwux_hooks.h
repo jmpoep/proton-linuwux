@@ -289,10 +289,22 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
                 break;
 
             case 0x336933:
-                MESSAGE("Spoofing CPUID leaf %x\n", leaf);
-                linuwux_protocol_flags |= LINUWUX_PROTOCOL_CURRENT;
-                linuwux_router.generic_target = ucontext->uc_mcontext.gregs[REG_RCX];
-                patch_kuser_shared_data();
+                if (linuwux_protocol_flags & LINUWUX_PROTOCOL_LEGACY)
+                {
+                    MESSAGE("Registering legacy QSI syscall target\n");
+                    linuwux_router.qsi.target =
+                        ucontext->uc_mcontext.gregs[REG_RCX];
+                    linuwux_router.qsi.target_valid = 1;
+                }
+                else
+                {
+                    MESSAGE("Spoofing CPUID leaf %x\n", leaf);
+                    linuwux_protocol_flags |= LINUWUX_PROTOCOL_CURRENT;
+                    linuwux_router.generic_target =
+                        ucontext->uc_mcontext.gregs[REG_RCX];
+                    patch_kuser_shared_data();
+                }
+
                 ucontext->uc_mcontext.gregs[REG_RAX] = 0x0;
                 ucontext->uc_mcontext.gregs[REG_RBX] = 0x0;
                 ucontext->uc_mcontext.gregs[REG_RCX] = 0x0;
