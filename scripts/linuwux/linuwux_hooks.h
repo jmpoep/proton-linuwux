@@ -19,6 +19,7 @@
 enum linuwux_protocol_flag
 {
     LINUWUX_PROTOCOL_CURRENT = 1u << 0,
+    LINUWUX_PROTOCOL_LEGACY  = 1u << 1,
 };
 
 static unsigned int linuwux_protocol_flags;
@@ -282,6 +283,15 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
                 linuwux_protocol_flags |= LINUWUX_PROTOCOL_CURRENT;
                 linuwux_router.generic_target = ucontext->uc_mcontext.gregs[REG_RCX];
                 patch_kuser_shared_data();
+                ucontext->uc_mcontext.gregs[REG_RAX] = 0x0;
+                ucontext->uc_mcontext.gregs[REG_RBX] = 0x0;
+                ucontext->uc_mcontext.gregs[REG_RCX] = 0x0;
+                ucontext->uc_mcontext.gregs[REG_RDX] = 0x0;
+                break;
+
+            case 0x69696969:
+                MESSAGE("Observing legacy LinUwUx protocol\n");
+                linuwux_protocol_flags |= LINUWUX_PROTOCOL_LEGACY;
                 ucontext->uc_mcontext.gregs[REG_RAX] = 0x0;
                 ucontext->uc_mcontext.gregs[REG_RBX] = 0x0;
                 ucontext->uc_mcontext.gregs[REG_RCX] = 0x0;
