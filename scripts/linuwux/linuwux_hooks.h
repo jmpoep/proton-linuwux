@@ -429,7 +429,7 @@ static int linuwux_handle_sigsys(void *sigcontext)
         linuwux_router.qsi.syscall_id_valid &&
         linuwux_router.qsi.target != 0 &&
         syscall_id == linuwux_router.qsi.syscall_id &&
-        ctx->uc_mcontext.gregs[REG_RCX] <= 0x7fffffffffffULL &&
+        (uint64_t)ctx->uc_mcontext.gregs[REG_RCX] <= UINT64_C(0x7fffffffffff) &&
         ctx->uc_mcontext.gregs[REG_R10] == 0)
         return linuwux_redirect_syscall(ctx, linuwux_router.qsi.target);
 
@@ -437,7 +437,7 @@ static int linuwux_handle_sigsys(void *sigcontext)
         linuwux_router.qfa.syscall_id_valid &&
         linuwux_router.qfa.target != 0 &&
         syscall_id == linuwux_router.qfa.syscall_id &&
-        ctx->uc_mcontext.gregs[REG_RCX] <= 0x7fffffffffffULL)
+        (uint64_t)ctx->uc_mcontext.gregs[REG_RCX] <= UINT64_C(0x7fffffffffff))
         return linuwux_redirect_syscall(ctx, linuwux_router.qfa.target);
 
     if (linuwux_router.generic_target != 0)
