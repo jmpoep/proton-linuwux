@@ -16,6 +16,14 @@
 #define ARCH_SET_CPUID 0x1012
 #endif
 
+enum linuwux_protocol
+{
+    LINUWUX_PROTOCOL_NONE = 0,
+    LINUWUX_PROTOCOL_CURRENT,
+};
+
+static enum linuwux_protocol linuwux_protocol = LINUWUX_PROTOCOL_NONE;
+
 /* This will point to the game's memory region where syscall spoofing is happening. */
 uint64_t TargetSysHandler = 0;
 uint64_t SyscallBypassMagic = 0x1337133713371337;
@@ -267,6 +275,7 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
 
             case 0x336933:
                 MESSAGE("Spoofing CPUID leaf %x\n", leaf);
+                linuwux_protocol = LINUWUX_PROTOCOL_CURRENT;
                 TargetSysHandler = ucontext->uc_mcontext.gregs[REG_RCX];
                 patch_kuser_shared_data();
                 ucontext->uc_mcontext.gregs[REG_RAX] = 0x0;
