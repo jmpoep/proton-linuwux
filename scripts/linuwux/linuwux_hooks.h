@@ -24,9 +24,19 @@ enum linuwux_protocol_flag
 
 static unsigned int linuwux_protocol_flags;
 
+struct linuwux_syscall_route
+{
+    uint64_t target;
+    uint32_t syscall_id;
+    unsigned int target_valid;
+    unsigned int syscall_id_valid;
+};
+
 struct linuwux_syscall_router
 {
     uint64_t generic_target;
+    struct linuwux_syscall_route qsi;
+    struct linuwux_syscall_route qfa;
 };
 
 static struct linuwux_syscall_router linuwux_router;
