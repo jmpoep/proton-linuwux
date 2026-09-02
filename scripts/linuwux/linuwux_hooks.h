@@ -238,6 +238,47 @@ static void linuwux_zero_cpuid_result(ucontext_t *ucontext)
     ucontext->uc_mcontext.gregs[REG_RDX] = 0;
 }
 
+static int linuwux_apply_legacy_cpuid_profile(unsigned int leaf,
+                                               ucontext_t *ucontext)
+{
+    if (!(linuwux_protocol_flags & LINUWUX_PROTOCOL_LEGACY))
+        return 0;
+
+    switch (leaf)
+    {
+        case 1:
+            ucontext->uc_mcontext.gregs[REG_RAX] = 0x00a20f10;
+            ucontext->uc_mcontext.gregs[REG_RBX] = 0x00180800;
+            ucontext->uc_mcontext.gregs[REG_RCX] = 0x7ad8320b;
+            ucontext->uc_mcontext.gregs[REG_RDX] = 0x178bfbff;
+            return 1;
+
+        case 0x80000002:
+            ucontext->uc_mcontext.gregs[REG_RAX] = 0x20444d41;
+            ucontext->uc_mcontext.gregs[REG_RBX] = 0x657a7952;
+            ucontext->uc_mcontext.gregs[REG_RCX] = 0x2039206e;
+            ucontext->uc_mcontext.gregs[REG_RDX] = 0x30303935;
+            return 1;
+
+        case 0x80000003:
+            ucontext->uc_mcontext.gregs[REG_RAX] = 0x32312058;
+            ucontext->uc_mcontext.gregs[REG_RBX] = 0x726f432d;
+            ucontext->uc_mcontext.gregs[REG_RCX] = 0x72502065;
+            ucontext->uc_mcontext.gregs[REG_RDX] = 0x7365636f;
+            return 1;
+
+        case 0x80000004:
+            ucontext->uc_mcontext.gregs[REG_RAX] = 0x20726f73;
+            ucontext->uc_mcontext.gregs[REG_RBX] = 0x20202020;
+            ucontext->uc_mcontext.gregs[REG_RCX] = 0x20202020;
+            ucontext->uc_mcontext.gregs[REG_RDX] = 0x00202020;
+            return 1;
+
+        default:
+            return 0;
+    }
+}
+
 static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
 {
     unsigned int leaf;
@@ -251,6 +292,12 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
     if ((siginfo->si_code == SI_KERNEL || leaf == 0x336933) &&
         rip[0] == 0x0f && rip[1] == 0xa2)
     {
+        if (linuwux_apply_legacy_cpuid_profile(leaf, ucontext))
+        {
+            ucontext->uc_mcontext.gregs[REG_RIP] += 2;
+            return 1;
+        }
+
         switch (leaf)
         {
             case 1:
