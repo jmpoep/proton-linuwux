@@ -162,6 +162,29 @@ static void patch_kuser_shared_data(void)
 }
 
 /**
+ * Force Wine x86-64 syscall thunks through the syscall instruction path.
+ *
+ * Keep this separate from the visible-state profiles because known
+ * protocol variants differ in whether they request the slow route.
+ */
+static void linuwux_enable_syscall_slow_route(void)
+{
+    UINT8 *kuser = (UINT8 *)0x000000007FFE0000UL;
+    size_t page_size = sysconf(_SC_PAGESIZE);
+    void *page_start =
+        (void *)((uintptr_t)0x000000007FFE0000UL & ~(page_size - 1));
+
+    if (mprotect(page_start, page_size, PROT_READ | PROT_WRITE) == -1)
+    {
+        MESSAGE("Failed to enable LinUwUx syscall slow route: %s\n",
+                strerror(errno));
+        return;
+    }
+
+    kuser[0x308] = 0;
+}
+
+/**
  * Apply the common legacy KUSER_SHARED_DATA visible-state profile.
  *
  * Keep syscall-route selection separate: known legacy variants differ
