@@ -93,6 +93,16 @@ fi
 if grep -Fq '"winmm": "n,b",' "$PROTON_FILE" ||
    grep -Fq '"version.dll": "n,b",' "$PROTON_FILE" ||
    grep -Fq '"reflex.dll": "n,b",' "$PROTON_FILE" ||
+   grep -Fq '"d3d9": "n,b",' "$PROTON_FILE" ||
+   grep -Fq '"d3d10": "n,b",' "$PROTON_FILE" ||
+   grep -Fq '"d3d11": "n,b",' "$PROTON_FILE" ||
+   grep -Fq '"d3d12": "n,b",' "$PROTON_FILE" ||
+   grep -Fq '"dinput8": "n,b",' "$PROTON_FILE" ||
+   grep -Fq '"dsound": "n,b",' "$PROTON_FILE" ||
+   grep -Fq '"dxgi": "n,b",' "$PROTON_FILE" ||
+   grep -Fq '"hid": "n,b",' "$PROTON_FILE" ||
+   grep -Fq '"wininet": "n,b",' "$PROTON_FILE" ||
+   grep -Fq '"winhttp": "n,b",' "$PROTON_FILE" ||
    grep -Fq 'if "PROTON_DISABLE_LSTEAMCLIENT" not in os.environ:' "$PROTON_FILE"
 then
     echo "Error: LinUwUx proton overrides are already present" >&2
@@ -457,6 +467,16 @@ awk '
         print "                \"winmm\": \"n,b\","
         print "                \"version.dll\": \"n,b\","
         print "                \"reflex.dll\": \"n,b\","
+        print "                \"d3d9\": \"n,b\","
+        print "                \"d3d10\": \"n,b\","
+        print "                \"d3d11\": \"n,b\","
+        print "                \"d3d12\": \"n,b\","
+        print "                \"dinput8\": \"n,b\","
+        print "                \"dsound\": \"n,b\","
+        print "                \"dxgi\": \"n,b\","
+        print "                \"hid\": \"n,b\","
+        print "                \"wininet\": \"n,b\","
+        print "                \"winhttp\": \"n,b\","
         next
     }
 
@@ -489,6 +509,15 @@ then
     echo "Error: failed to prepare reflex.dll override in proton" >&2
     exit 1
 fi
+
+for LINUWUX_DLL_OVERRIDE in d3d9 d3d10 d3d11 d3d12 dinput8 dsound dxgi hid wininet winhttp
+do
+    if ! grep -Fq "\"${LINUWUX_DLL_OVERRIDE}\": \"n,b\"," "$PROTON_TMP"
+    then
+        echo "Error: failed to prepare ${LINUWUX_DLL_OVERRIDE} override in proton" >&2
+        exit 1
+    fi
+done
 
 if ! grep -Fq 'if "PROTON_DISABLE_LSTEAMCLIENT" not in os.environ:' "$PROTON_TMP"
 then
