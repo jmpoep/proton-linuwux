@@ -495,6 +495,7 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
                 {
                     MESSAGE("Applying legacy KUSER_SHARED_DATA profile\n");
                     patch_legacy_kuser_shared_data();
+                    linuwux_enable_syscall_slow_route();
                     linuwux_zero_cpuid_result(ucontext);
                     break;
                 }
