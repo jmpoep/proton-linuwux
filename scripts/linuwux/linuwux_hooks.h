@@ -467,6 +467,18 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
                 linuwux_zero_cpuid_result(ucontext);
                 break;
 
+            case 0x1337:
+                if (linuwux_protocol_flags & LINUWUX_PROTOCOL_LEGACY)
+                {
+                    MESSAGE("Applying legacy KUSER_SHARED_DATA profile\n");
+                    patch_legacy_kuser_shared_data();
+                    linuwux_zero_cpuid_result(ucontext);
+                    break;
+                }
+
+                /* Non-legacy callers retain the native CPUID result. */
+                __attribute__((fallthrough));
+
             default:
                 syscall(SYS_arch_prctl, ARCH_SET_CPUID, 1);
 
