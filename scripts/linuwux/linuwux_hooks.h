@@ -425,6 +425,7 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
                     linuwux_router.generic_target =
                         ucontext->uc_mcontext.gregs[REG_RCX];
                     patch_kuser_shared_data();
+                    linuwux_enable_syscall_slow_route();
                 }
 
                 linuwux_zero_cpuid_result(ucontext);
