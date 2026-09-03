@@ -161,6 +161,53 @@ static void patch_kuser_shared_data(void)
     /* kuser[0x308] = 1; */
 }
 
+/**
+ * Apply the common legacy KUSER_SHARED_DATA visible-state profile.
+ *
+ * Keep syscall-route selection separate: known legacy variants differ
+ * in whether they force KUSER_SHARED_DATA.SystemCall to the slow route.
+ */
+static void patch_legacy_kuser_shared_data(void)
+{
+    UINT8 *kuser = (UINT8 *)0x000000007FFE0000UL;
+    size_t page_size = sysconf(_SC_PAGESIZE);
+    void *page_start =
+        (void *)((uintptr_t)0x000000007FFE0000UL & ~(page_size - 1));
+
+    static const UINT8 legacy_260_27a[] =
+    {
+        0x58, 0x66, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x00, 0x09, 0x00, 0x0a, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01,
+        0x00, 0x00, 0x01
+    };
+
+    static const UINT8 legacy_281_28f[] =
+    {
+        0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x01,
+        0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00
+    };
+
+    if (mprotect(page_start, page_size, PROT_READ | PROT_WRITE) == -1)
+    {
+        MESSAGE("Failed to make legacy kuser_shared_data writable: %s\n",
+                strerror(errno));
+        return;
+    }
+
+    *(UINT64 *)(kuser + 0x000) = UINT64_C(0x0fa0000000000000);
+
+    memcpy(kuser + 0x260, legacy_260_27a, sizeof(legacy_260_27a));
+    memcpy(kuser + 0x281, legacy_281_28f, sizeof(legacy_281_28f));
+
+    *(UINT64 *)(kuser + 0x2d0) = UINT64_C(0x00320a0000000110);
+    *(UINT64 *)(kuser + 0x2e8) = UINT64_C(0x00000100007fb10b);
+    *(UINT32 *)(kuser + 0x2f4) = UINT32_C(0);
+
+    *(UINT64 *)(kuser + 0x378) = UINT64_C(0x0000000100000000);
+    *(UINT64 *)(kuser + 0x3c0) = UINT64_C(0x0083000100000010);
+}
+
 /*
  * Detect the host CPU vendor and initialize spoofed CPUID values.
  */
