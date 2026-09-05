@@ -12,14 +12,16 @@
 #define LINUWUX_HOOKS_INCLUDED
 
 #include <errno.h>
+#include <unistd.h>
 #ifndef ARCH_SET_CPUID
 #define ARCH_SET_CPUID 0x1012
 #endif
 
 enum linuwux_protocol_flag
 {
-    LINUWUX_PROTOCOL_CURRENT = 1u << 0,
-    LINUWUX_PROTOCOL_LEGACY  = 1u << 1,
+    LINUWUX_PROTOCOL_CURRENT         = 1u << 0,
+    LINUWUX_PROTOCOL_LEGACY          = 1u << 1,
+    LINUWUX_PROTOCOL_LEGACY_OBSERVED = 1u << 2,
 };
 
 static unsigned int linuwux_protocol_flags;
@@ -35,11 +37,16 @@ struct linuwux_syscall_route
 struct linuwux_syscall_router
 {
     uint64_t generic_target;
+
+    uint64_t pending_336933_target;
+    unsigned int pending_336933_valid;
+
     struct linuwux_syscall_route qsi;
     struct linuwux_syscall_route qfa;
 };
 
 static struct linuwux_syscall_router linuwux_router;
+static KUSER_SHARED_DATA *linuwux_kuser_write_alias;
 
 uint64_t SyscallBypassMagic = 0x1337133713371337;
 
@@ -62,6 +69,97 @@ static unsigned int spoof_leaf1_edx;
 /**
  * Patch KUSER_SHARED_DATA with spoofed values.
  */
+struct linuwux_kuser_saved_region
+{
+    size_t offset;
+    size_t size;
+    UINT8 *data;
+};
+
+static UINT8 linuwux_saved_kuser_0030[0x104];
+static UINT8 linuwux_saved_kuser_0260[0x54];
+static UINT8 linuwux_saved_kuser_02d0[0x08];
+static UINT8 linuwux_saved_kuser_02e8[0x08];
+static UINT8 linuwux_saved_kuser_02f4[0x04];
+static UINT8 linuwux_saved_kuser_036c[0x14];
+static UINT8 linuwux_saved_kuser_03c0[0x08];
+static UINT8 linuwux_saved_kuser_03d8[0x10];
+static UINT8 linuwux_saved_kuser_03ec[0x204];
+static UINT8 linuwux_saved_kuser_05f0[0x10];
+static UINT8 linuwux_saved_kuser_0604[0x200];
+static UINT8 linuwux_saved_kuser_0808[0x10];
+static UINT8 linuwux_saved_kuser_0ffc[0x04];
+
+static struct linuwux_kuser_saved_region linuwux_current_kuser_regions[] =
+{
+    {0x030, sizeof(linuwux_saved_kuser_0030), linuwux_saved_kuser_0030},
+    {0x260, sizeof(linuwux_saved_kuser_0260), linuwux_saved_kuser_0260},
+    {0x2d0, sizeof(linuwux_saved_kuser_02d0), linuwux_saved_kuser_02d0},
+    {0x2e8, sizeof(linuwux_saved_kuser_02e8), linuwux_saved_kuser_02e8},
+    {0x2f4, sizeof(linuwux_saved_kuser_02f4), linuwux_saved_kuser_02f4},
+    {0x36c, sizeof(linuwux_saved_kuser_036c), linuwux_saved_kuser_036c},
+    {0x3c0, sizeof(linuwux_saved_kuser_03c0), linuwux_saved_kuser_03c0},
+    {0x3d8, sizeof(linuwux_saved_kuser_03d8), linuwux_saved_kuser_03d8},
+    {0x3ec, sizeof(linuwux_saved_kuser_03ec), linuwux_saved_kuser_03ec},
+    {0x5f0, sizeof(linuwux_saved_kuser_05f0), linuwux_saved_kuser_05f0},
+    {0x604, sizeof(linuwux_saved_kuser_0604), linuwux_saved_kuser_0604},
+    {0x808, sizeof(linuwux_saved_kuser_0808), linuwux_saved_kuser_0808},
+    {0xffc, sizeof(linuwux_saved_kuser_0ffc), linuwux_saved_kuser_0ffc},
+};
+
+static int linuwux_current_kuser_snapshot_valid;
+
+static void linuwux_snapshot_current_kuser_state(void)
+{
+    UINT8 *kuser = (UINT8 *)0x000000007FFE0000UL;
+    size_t i;
+
+    if (linuwux_current_kuser_snapshot_valid)
+        return;
+
+    for (i = 0; i < sizeof(linuwux_current_kuser_regions) /
+                    sizeof(linuwux_current_kuser_regions[0]); ++i)
+    {
+        memcpy(linuwux_current_kuser_regions[i].data,
+               kuser + linuwux_current_kuser_regions[i].offset,
+               linuwux_current_kuser_regions[i].size);
+    }
+
+    linuwux_current_kuser_snapshot_valid = 1;
+}
+
+static void linuwux_restore_pre_current_kuser_state(void)
+{
+    UINT8 *kuser = (UINT8 *)0x000000007FFE0000UL;
+    size_t page_size;
+    void *page_start;
+    size_t i;
+
+    if (!linuwux_current_kuser_snapshot_valid)
+        return;
+
+    page_size = sysconf(_SC_PAGESIZE);
+    page_start =
+        (void *)((uintptr_t)0x000000007FFE0000UL & ~(page_size - 1));
+
+    if (mprotect(page_start, page_size, PROT_READ | PROT_WRITE) == -1)
+    {
+        MESSAGE("Failed to restore pre-current KUSER state: %s\n",
+                strerror(errno));
+        return;
+    }
+
+    for (i = 0; i < sizeof(linuwux_current_kuser_regions) /
+                    sizeof(linuwux_current_kuser_regions[0]); ++i)
+    {
+        memcpy(kuser + linuwux_current_kuser_regions[i].offset,
+               linuwux_current_kuser_regions[i].data,
+               linuwux_current_kuser_regions[i].size);
+    }
+
+    linuwux_current_kuser_snapshot_valid = 0;
+}
+
 static void patch_kuser_shared_data(void)
 {
     UINT8 *kuser = (UINT8 *)0x000000007FFE0000UL;
@@ -75,6 +173,8 @@ static void patch_kuser_shared_data(void)
         MESSAGE("Failed to make kuser_shared_data writable: %s\n", strerror(errno));
         return;
     }
+
+    linuwux_snapshot_current_kuser_state();
 
     memcpy((void *)(kuser + 0x30),
            "\x43\x00\x3A\x00\x5C\x00\x57\x00\x69\x00\x6E\x00\x64\x00\x6F\x00"
@@ -161,27 +261,28 @@ static void patch_kuser_shared_data(void)
     /* kuser[0x308] = 1; */
 }
 
+static void linuwux_prepare_kuser_write_alias(void)
+{
+    if (linuwux_kuser_write_alias)
+        return;
+
+    linuwux_kuser_write_alias =
+        virtual_map_user_shared_data_write_alias();
+
+    if (!linuwux_kuser_write_alias)
+        MESSAGE("LinUwUx: writable KUSER alias unavailable\n");
+}
+
 /**
  * Force Wine x86-64 syscall thunks through the syscall instruction path.
  *
  * Keep this separate from the visible-state profiles because known
  * protocol variants differ in whether they request the slow route.
  */
-static void linuwux_enable_syscall_slow_route(void)
+static inline void linuwux_enable_syscall_slow_route(void)
 {
-    UINT8 *kuser = (UINT8 *)0x000000007FFE0000UL;
-    size_t page_size = sysconf(_SC_PAGESIZE);
-    void *page_start =
-        (void *)((uintptr_t)0x000000007FFE0000UL & ~(page_size - 1));
-
-    if (mprotect(page_start, page_size, PROT_READ | PROT_WRITE) == -1)
-    {
-        MESSAGE("Failed to enable LinUwUx syscall slow route: %s\n",
-                strerror(errno));
-        return;
-    }
-
-    kuser[0x308] = 0;
+    if (linuwux_kuser_write_alias)
+        linuwux_kuser_write_alias->SystemCall = 0;
 }
 
 /**
@@ -308,6 +409,68 @@ static void linuwux_zero_cpuid_result(ucontext_t *ucontext)
     ucontext->uc_mcontext.gregs[REG_RDX] = 0;
 }
 
+static inline void linuwux_commit_pending_current_route(void)
+{
+    if (!linuwux_router.pending_336933_valid)
+        return;
+
+    if (linuwux_protocol_flags & LINUWUX_PROTOCOL_LEGACY)
+        return;
+
+    linuwux_protocol_flags |= LINUWUX_PROTOCOL_CURRENT;
+
+    linuwux_router.generic_target =
+        linuwux_router.pending_336933_target;
+
+    linuwux_router.pending_336933_target = 0;
+    linuwux_router.pending_336933_valid = 0;
+}
+
+
+static inline void linuwux_resolve_pending_legacy_route(void)
+{
+    if (!linuwux_router.pending_336933_valid)
+        return;
+
+    if (!linuwux_router.qsi.target_valid)
+    {
+        linuwux_router.qsi.target =
+            linuwux_router.pending_336933_target;
+        linuwux_router.qsi.target_valid = 1;
+    }
+
+    linuwux_router.pending_336933_target = 0;
+    linuwux_router.pending_336933_valid = 0;
+}
+
+
+static void linuwux_activate_legacy_protocol(void)
+{
+    unsigned int was_legacy =
+        linuwux_protocol_flags & LINUWUX_PROTOCOL_LEGACY;
+
+    linuwux_protocol_flags |= LINUWUX_PROTOCOL_LEGACY;
+
+    if (linuwux_router.pending_336933_valid)
+    {
+        linuwux_resolve_pending_legacy_route();
+    }
+    else if (!linuwux_router.qsi.target_valid &&
+             linuwux_router.generic_target)
+    {
+        linuwux_router.qsi.target =
+            linuwux_router.generic_target;
+        linuwux_router.qsi.target_valid = 1;
+    }
+
+    /*
+     * KUSER transition remains deferred until the existing explicit
+     * legacy-profile event.
+     */
+    if (!was_legacy)
+        MESSAGE("Activating legacy LinUwUx protocol\n");
+}
+
 static int linuwux_apply_legacy_cpuid_profile(unsigned int leaf,
                                                ucontext_t *ucontext)
 {
@@ -414,16 +577,51 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
                 if (linuwux_protocol_flags & LINUWUX_PROTOCOL_LEGACY)
                 {
                     MESSAGE("Registering legacy QSI syscall target\n");
+
                     linuwux_router.qsi.target =
                         ucontext->uc_mcontext.gregs[REG_RCX];
                     linuwux_router.qsi.target_valid = 1;
                 }
+                else if (linuwux_protocol_flags &
+                         LINUWUX_PROTOCOL_LEGACY_OBSERVED)
+                {
+                    /*
+                     * Ambiguous registration.
+                     *
+                     * Keep routing unresolved while exposing the CURRENT
+                     * KUSER-visible state required by the syscall path.
+                     * A later LEGACY promotion restores the pre-CURRENT
+                     * snapshot before applying the legacy KUSER profile.
+                     */
+                    linuwux_router.pending_336933_target =
+                        ucontext->uc_mcontext.gregs[REG_RCX];
+
+                    linuwux_router.pending_336933_valid = 1;
+
+                    /*
+                     * Pending CURRENT-visible state.
+                     *
+                     * Routing remains unresolved until either an explicit
+                     * legacy registration or the first routable SIGSYS.
+                     * Snapshot support allows a later LEGACY transition to
+                     * reconstruct its pre-CURRENT KUSER state.
+                     */
+                    patch_kuser_shared_data();
+                    linuwux_enable_syscall_slow_route();
+                }
                 else
                 {
+                    /*
+                     * Direct/non-ambiguous CURRENT path remains unchanged.
+                     */
                     MESSAGE("Spoofing CPUID leaf %x\n", leaf);
-                    linuwux_protocol_flags |= LINUWUX_PROTOCOL_CURRENT;
+
+                    linuwux_protocol_flags |=
+                        LINUWUX_PROTOCOL_CURRENT;
+
                     linuwux_router.generic_target =
                         ucontext->uc_mcontext.gregs[REG_RCX];
+
                     patch_kuser_shared_data();
                     linuwux_enable_syscall_slow_route();
                 }
@@ -432,17 +630,18 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
                 break;
 
             case 0x69696969:
+                /*
+                 * Observation only: no semantic protocol transition yet.
+                 */
                 MESSAGE("Observing legacy LinUwUx protocol\n");
-                linuwux_protocol_flags |= LINUWUX_PROTOCOL_LEGACY;
-                linuwux_zero_cpuid_result(ucontext);
-                break;
+
+                linuwux_protocol_flags |=
+                    LINUWUX_PROTOCOL_LEGACY_OBSERVED;
+
+                goto native_cpuid;
 
             case 0x336943:
-                if (!(linuwux_protocol_flags & LINUWUX_PROTOCOL_LEGACY))
-                {
-                    linuwux_zero_cpuid_result(ucontext);
-                    break;
-                }
+                linuwux_activate_legacy_protocol();
 
                 MESSAGE("Registering legacy QSI syscall ID\n");
                 linuwux_router.qsi.syscall_id =
@@ -452,11 +651,7 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
                 break;
 
             case 0x336934:
-                if (!(linuwux_protocol_flags & LINUWUX_PROTOCOL_LEGACY))
-                {
-                    linuwux_zero_cpuid_result(ucontext);
-                    break;
-                }
+                linuwux_activate_legacy_protocol();
 
                 MESSAGE("Registering legacy QFA syscall target\n");
                 linuwux_router.qfa.target =
@@ -466,11 +661,7 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
                 break;
 
             case 0x336944:
-                if (!(linuwux_protocol_flags & LINUWUX_PROTOCOL_LEGACY))
-                {
-                    linuwux_zero_cpuid_result(ucontext);
-                    break;
-                }
+                linuwux_activate_legacy_protocol();
 
                 MESSAGE("Registering legacy QFA syscall ID\n");
                 linuwux_router.qfa.syscall_id =
@@ -495,6 +686,15 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
                 if (linuwux_protocol_flags & LINUWUX_PROTOCOL_LEGACY)
                 {
                     MESSAGE("Applying legacy KUSER_SHARED_DATA profile\n");
+
+                    /*
+                     * A retroactively promoted legacy session may already
+                     * have received the CURRENT KUSER profile through
+                     * 0x336933.  Reconstruct the state that historical
+                     * legacy entry would have seen before applying its
+                     * profile.
+                     */
+                    linuwux_restore_pre_current_kuser_state();
                     patch_legacy_kuser_shared_data();
                     linuwux_enable_syscall_slow_route();
                     linuwux_zero_cpuid_result(ucontext);
@@ -505,6 +705,7 @@ static int linuwux_handle_cpuid(siginfo_t *siginfo, ucontext_t *ucontext)
                 __attribute__((fallthrough));
 
             default:
+native_cpuid:
                 syscall(SYS_arch_prctl, ARCH_SET_CPUID, 1);
 
                 __asm__ volatile(
@@ -555,6 +756,12 @@ static int linuwux_handle_sigsys(void *sigcontext)
 
     if (ctx->uc_mcontext.gregs[REG_RAX] == 0xffff)
         return 0;
+
+    /*
+     * First routable SIGSYS resolves an ambiguous registration as CURRENT.
+     * Pure state mutation only: no mmap/mprotect/sysconf/logging here.
+     */
+    linuwux_commit_pending_current_route();
 
     if (linuwux_router.qsi.target_valid &&
         linuwux_router.qsi.syscall_id_valid &&

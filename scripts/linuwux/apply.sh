@@ -23,6 +23,8 @@ HOOKS_SOURCE="$ROOT_DIR/scripts/linuwux/linuwux_hooks.h"
 BPF_HELPER="$ROOT_DIR/scripts/linuwux/apply_bpf_backend.py"
 HOOKS_DEST="$SOURCE_DIR/wine/dlls/ntdll/unix/linuwux_hooks.h"
 SIGNAL_FILE="$SOURCE_DIR/wine/dlls/ntdll/unix/signal_x86_64.c"
+VIRTUAL_FILE="$SOURCE_DIR/wine/dlls/ntdll/unix/virtual.c"
+UNIX_PRIVATE_FILE="$SOURCE_DIR/wine/dlls/ntdll/unix/unix_private.h"
 PROTOCOL_FILE="$SOURCE_DIR/wine/server/protocol.def"
 FD_FILE="$SOURCE_DIR/wine/server/fd.c"
 WINE_INF_FILE="$SOURCE_DIR/wine/loader/wine.inf.in"
@@ -53,6 +55,20 @@ if [[ ! -f "$SIGNAL_FILE" ]]
 then
     echo "Error: signal_x86_64.c not found:" >&2
     echo "$SIGNAL_FILE" >&2
+    exit 1
+fi
+
+if [[ ! -f "$VIRTUAL_FILE" ]]
+then
+    echo "Error: Wine virtual.c not found:" >&2
+    echo "$VIRTUAL_FILE" >&2
+    exit 1
+fi
+
+if [[ ! -f "$UNIX_PRIVATE_FILE" ]]
+then
+    echo "Error: Wine unix_private.h not found:" >&2
+    echo "$UNIX_PRIVATE_FILE" >&2
     exit 1
 fi
 
@@ -304,17 +320,23 @@ else
 fi
 
 SIGNAL_TMP="$(mktemp)"
+VIRTUAL_TMP="$(mktemp)"
+UNIX_PRIVATE_TMP="$(mktemp)"
 PROTOCOL_TMP="$(mktemp)"
 FD_TMP="$(mktemp)"
 WINE_INF_TMP="$(mktemp)"
 PROTON_TMP="$(mktemp)"
 SIGNAL_BACKUP="$(mktemp)"
+VIRTUAL_BACKUP="$(mktemp)"
+UNIX_PRIVATE_BACKUP="$(mktemp)"
 PROTOCOL_BACKUP="$(mktemp)"
 FD_BACKUP="$(mktemp)"
 WINE_INF_BACKUP="$(mktemp)"
 PROTON_BACKUP="$(mktemp)"
 
 cp -p "$SIGNAL_FILE" "$SIGNAL_BACKUP"
+cp -p "$VIRTUAL_FILE" "$VIRTUAL_BACKUP"
+cp -p "$UNIX_PRIVATE_FILE" "$UNIX_PRIVATE_BACKUP"
 cp -p "$PROTOCOL_FILE" "$PROTOCOL_BACKUP"
 cp -p "$FD_FILE" "$FD_BACKUP"
 cp -p "$WINE_INF_FILE" "$WINE_INF_BACKUP"
@@ -322,13 +344,17 @@ cp -p "$PROTON_FILE" "$PROTON_BACKUP"
 
 cleanup()
 {
-    rm -f "$SIGNAL_TMP" "$PROTOCOL_TMP" "$FD_TMP" "$WINE_INF_TMP" "$PROTON_TMP" \
-          "$SIGNAL_BACKUP" "$PROTOCOL_BACKUP" "$FD_BACKUP" "$WINE_INF_BACKUP" "$PROTON_BACKUP"
+    rm -f "$SIGNAL_TMP" "$VIRTUAL_TMP" "$UNIX_PRIVATE_TMP" \
+          "$PROTOCOL_TMP" "$FD_TMP" "$WINE_INF_TMP" "$PROTON_TMP" \
+          "$SIGNAL_BACKUP" "$VIRTUAL_BACKUP" "$UNIX_PRIVATE_BACKUP" \
+          "$PROTOCOL_BACKUP" "$FD_BACKUP" "$WINE_INF_BACKUP" "$PROTON_BACKUP"
 }
 
 rollback()
 {
     cp -p "$SIGNAL_BACKUP" "$SIGNAL_FILE"
+    cp -p "$VIRTUAL_BACKUP" "$VIRTUAL_FILE"
+    cp -p "$UNIX_PRIVATE_BACKUP" "$UNIX_PRIVATE_FILE"
     cp -p "$PROTOCOL_BACKUP" "$PROTOCOL_FILE"
     cp -p "$FD_BACKUP" "$FD_FILE"
     cp -p "$WINE_INF_BACKUP" "$WINE_INF_FILE"
@@ -338,6 +364,109 @@ rollback()
 
 trap rollback ERR
 trap cleanup EXIT
+
+python3 - "$VIRTUAL_FILE" "$VIRTUAL_TMP" <<'PYVIRTUAL'
+from pathlib import Path
+import sys
+
+src = Path(sys.argv[1]).read_text()
+dst = Path(sys.argv[2])
+
+if "virtual_map_user_shared_data_write_alias" in src:
+    raise SystemExit(
+        "Error: writable user-shared-data alias API already present"
+    )
+
+anchor = """/***********************************************************************
+ *           virtual_map_user_shared_data
+ */
+"""
+
+if src.count(anchor) != 1:
+    raise SystemExit(
+        "Error: expected exactly one virtual_map_user_shared_data anchor"
+    )
+
+func = """/*
+ * Return a writable alias of the process user shared data section.
+ *
+ * The canonical KUSER_SHARED_DATA mapping remains read-only.
+ * This view aliases the same MAP_SHARED backing object.
+ */
+KUSER_SHARED_DATA *virtual_map_user_shared_data_write_alias(void)
+{
+    UNICODE_STRING name_str = RTL_CONSTANT_STRING( shared_data_nameW );
+    OBJECT_ATTRIBUTES attr = { sizeof(attr), 0, &name_str };
+    KUSER_SHARED_DATA *data;
+    unsigned int status;
+    HANDLE section;
+    int res, fd, needs_close;
+
+    if ((status = NtOpenSection( &section, SECTION_ALL_ACCESS, &attr )))
+    {
+        ERR( "failed to open the USD section for writable alias: %08x\\\\n",
+             status );
+        return NULL;
+    }
+
+    res = server_get_unix_fd(
+        section, 0, &fd, &needs_close, NULL, NULL );
+
+    if (res)
+    {
+        NtClose( section );
+        return NULL;
+    }
+
+    data = mmap(
+        NULL, page_size,
+        PROT_READ | PROT_WRITE,
+        MAP_SHARED, fd, 0 );
+
+    if (needs_close)
+        close( fd );
+
+    NtClose( section );
+
+    if (data == MAP_FAILED)
+        return NULL;
+
+    return data;
+}
+
+
+"""
+
+dst.write_text(src.replace(anchor, func + anchor, 1))
+PYVIRTUAL
+
+
+python3 - "$UNIX_PRIVATE_FILE" "$UNIX_PRIVATE_TMP" <<'PYPRIVATE'
+from pathlib import Path
+import sys
+
+src = Path(sys.argv[1]).read_text()
+dst = Path(sys.argv[2])
+
+if "virtual_map_user_shared_data_write_alias" in src:
+    raise SystemExit(
+        "Error: writable user-shared-data alias declaration already present"
+    )
+
+anchor = "extern void virtual_map_user_shared_data(void);\n"
+
+decl = """extern struct _KUSER_SHARED_DATA *
+virtual_map_user_shared_data_write_alias(void);
+"""
+
+if src.count(anchor) != 1:
+    raise SystemExit(
+        "Error: expected exactly one virtual_map_user_shared_data declaration"
+    )
+
+dst.write_text(src.replace(anchor, anchor + decl, 1))
+PYPRIVATE
+
 
 cp "$PROTOCOL_FILE" "$PROTOCOL_TMP"
 
@@ -419,6 +548,7 @@ in_segv && /rec\.ExceptionAddress = \(void \*\)RIP_sig\(ucontext\);/ {
     /if \(sigaction\( SIGSEGV, &sig_act, NULL \) == -1\) goto error;/ {
         print
         print "    detect_cpu_vendor();"
+        print "    linuwux_prepare_kuser_write_alias();"
         print "    syscall(SYS_arch_prctl, ARCH_SET_CPUID, 0);"
         next
     }
@@ -584,4 +714,6 @@ cp "$FD_TMP" "$FD_FILE"
 cp "$WINE_INF_TMP" "$WINE_INF_FILE"
 cp "$PROTON_TMP" "$PROTON_FILE"
 cp "$SIGNAL_TMP" "$SIGNAL_FILE"
+cp -p "$VIRTUAL_TMP" "$VIRTUAL_FILE"
+cp -p "$UNIX_PRIVATE_TMP" "$UNIX_PRIVATE_FILE"
 cp "$HOOKS_SOURCE" "$HOOKS_DEST"
