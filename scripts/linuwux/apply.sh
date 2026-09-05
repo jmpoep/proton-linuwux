@@ -26,6 +26,7 @@ SIGNAL_FILE="$SOURCE_DIR/wine/dlls/ntdll/unix/signal_x86_64.c"
 VIRTUAL_FILE="$SOURCE_DIR/wine/dlls/ntdll/unix/virtual.c"
 UNIX_PRIVATE_FILE="$SOURCE_DIR/wine/dlls/ntdll/unix/unix_private.h"
 PROTOCOL_FILE="$SOURCE_DIR/wine/server/protocol.def"
+REQUESTS_TOOL="$SOURCE_DIR/wine/tools/make_requests"
 FD_FILE="$SOURCE_DIR/wine/server/fd.c"
 WINE_INF_FILE="$SOURCE_DIR/wine/loader/wine.inf.in"
 PROTON_FILE="$SOURCE_DIR/proton"
@@ -41,6 +42,19 @@ if [[ ! -f "$BPF_HELPER" ]]
 then
     echo "Error: LinUwUx BPF helper not found:" >&2
     echo "$BPF_HELPER" >&2
+    exit 1
+fi
+
+if [[ ! -f "$REQUESTS_TOOL" ]]
+then
+    echo "Error: Wine server request generator not found:" >&2
+    echo "$REQUESTS_TOOL" >&2
+    exit 1
+fi
+
+if ! command -v perl >/dev/null 2>&1
+then
+    echo "Error: perl is required to regenerate Wine server protocol files" >&2
     exit 1
 fi
 
@@ -717,3 +731,33 @@ cp "$SIGNAL_TMP" "$SIGNAL_FILE"
 cp -p "$VIRTUAL_TMP" "$VIRTUAL_FILE"
 cp -p "$UNIX_PRIVATE_TMP" "$UNIX_PRIVATE_FILE"
 cp "$HOOKS_SOURCE" "$HOOKS_DEST"
+
+# server/protocol.def is the authoritative Wine server protocol source.
+# Regenerate its derived files instead of relying on potentially stale
+# committed generated headers from a particular Wine/Proton backend.
+if ! (
+    cd "$SOURCE_DIR/wine"
+    perl tools/make_requests
+)
+then
+    echo "Error: failed to regenerate Wine server protocol files" >&2
+    exit 1
+fi
+
+if ! grep -Fq 'struct set_faketime_request' "$SOURCE_DIR/wine/include/wine/server_protocol.h"
+then
+    echo "Error: generated server_protocol.h is missing set_faketime" >&2
+    exit 1
+fi
+
+if ! grep -Fq 'REQ_set_faketime' "$SOURCE_DIR/wine/include/wine/server_protocol.h"
+then
+    echo "Error: generated server protocol request table is missing set_faketime" >&2
+    exit 1
+fi
+
+if ! grep -Fq 'DECL_HANDLER(set_faketime);' "$SOURCE_DIR/wine/server/request_handlers.h"
+then
+    echo "Error: generated request_handlers.h is missing set_faketime" >&2
+    exit 1
+fi
